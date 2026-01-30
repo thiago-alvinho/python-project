@@ -1,0 +1,64 @@
+services:
+  # -----------------------------------------------------------------
+  # SERVIÇO 1: Banco de Dados (PostgreSQL)
+  # -----------------------------------------------------------------
+  db:
+    image: postgres:latest
+    container_name: ans-database
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Postgres2018!
+      POSTGRES_DB: ans_db
+    ports:
+      - "5432:5432"
+    volumes:
+      # Mapeia os CSVs locais para dentro do container
+      - ./csv:/tmp/csv_data
+      # Executa o script SQL automaticamente na primeira inicialização
+      - ./sql:/docker-entrypoint-initdb.d/
+      # Persiste os dados do banco para não perder ao desligar
+      - ./postgres_data:/var/lib/postgresql
+    networks:
+      - ans-network
+
+  # -----------------------------------------------------------------
+  # SERVIÇO 2: Interface Gráfica (pgAdmin 4)
+  # -----------------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: teste-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: thiago_silva.9@hotmail.com
+      PGADMIN_DEFAULT_PASSWORD: PgAdmin2018!
+    ports:
+      - "15432:80" # Acessar no navegador via http://localhost:15432
+    depends_on:
+      - db # Garante que o pgAdmin inicie sabendo que o banco existe
+    networks:
+      - ans-network
+    volumes:
+      # Opcional: Salva suas configurações de servidor do pgAdmin
+      - pgadmin_data:/var/lib/pgadmin
+
+  backend:
+    build: .  # Aponta para a pasta onde está o Dockerfile
+    container_name: ans-api
+    ports:
+      - "8000:8000"   # Acessar em localhost:8000
+    environment:
+      # AQUI ESTÁ A MÁGICA: Conecta ao host 'db' na porta 5432
+      DATABASE_URL: postgresql+asyncpg://postgres:Postgres2018!@db:5432/ans_db
+    depends_on:
+      - db            # Espera o banco subir antes de iniciar a API
+    networks:
+      - ans-network
+
+# Definição dos Volumes Persistentes
+volumes:
+  postgres_data:
+  pgadmin_data:
+
+# Definição da Rede (para eles se enxergarem)
+networks:
+  ans-network:
+    driver: bridge
