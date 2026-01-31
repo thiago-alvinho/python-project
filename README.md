@@ -56,6 +56,10 @@ Decimal pois é mais preciso para cálculos financeiros. Integer não conseguir�
 
 Date pois string tornaria operações no banco como ORDER BY mais custosas e TIMESTAMP não é necessário porque não usaremos hora.
 
+### 4.2.3 Cache vs Queries diretas
 
+#### Escolha
+A solução técnica escolhida é o cache
 
-
+#### Motivo
+Os dados da ANS são históricos e trimestrais. Por esse motivo, não é necessário atualizar o cálculo desses dados a todo momento. A utilização do cache evitará esses cálculos desnecessários.
