@@ -9,7 +9,7 @@
 3. A aplicação ficará disponível em localhost:3001.
 4. Caso desejado, a api pode ser acessada por localhost:8000/docs, onde poderá ser visto as rotas disponíveis.
 5. Caso desejado, há como acessar o banco através do pgAdmin em localhost:15432/
-login: ans_db@hotmail.com senha: PgAdmin2018!
+login: thiago_silva.9@hotmail.com senha: PgAdmin2018!
 Conecte ao servidor:
 Host name/address: db
 Maintenance database: ans_db
