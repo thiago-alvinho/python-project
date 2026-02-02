@@ -7,61 +7,60 @@ import glob
 import warnings
 import io
 import re
-import numpy as np
+import csv
 
 # --- CONFIGURAÇÃO ---
+BASE_DIR = os.getenv("BASE_DATA_DIR", "../data")
+# Calcula o diretório pai (um nível acima de data) para salvar fora de /data
+DIR_PAI = os.path.dirname(os.path.normpath(BASE_DIR))
+
 URL_DIRETORIO_ANS = "https://dadosabertos.ans.gov.br/FTP/PDA/operadoras_de_plano_de_saude_ativas/"
-PASTA_CADASTRO = "downloads_ans/cadastral"
-ARQUIVO_DESPESAS_ZIP = "consolidado_despesas.zip"
+ARQUIVO_DESPESAS_ZIP = os.path.join(BASE_DIR, "consolidado_despesas.zip")
 
 # Arquivos de Saída
-ARQUIVO_ANALITICO = "relatorio_final_validado.csv"
-ARQUIVO_AGREGADO = "despesas_agregadas.csv"
-NOME_ZIP_FINAL = "Teste_Thiago_Alves_da_Silva.zip"
+ARQUIVO_ANALITICO = os.path.join(BASE_DIR, "relatorio_final_validado.csv")
+ARQUIVO_AGREGADO = os.path.join(BASE_DIR, "despesas_agregadas.csv")
+NOME_ZIP_FINAL = os.path.join(BASE_DIR, "Teste_Thiago_Alves_da_Silva.zip")
+PASTA_CSV_EXTERNA = os.path.join(DIR_PAI, "csv")
 
+# Coluna utilizada para o join das tabelas
 COLUNA_ALVO_REGISTRO = "REGISTRO_OPERADORA"
 
 warnings.filterwarnings("ignore")
 requests.packages.urllib3.disable_warnings()
 
-# ==============================================================================
-# UTILITÁRIOS
-# ==============================================================================
-
-def detectar_separador(caminho_ou_buffer, is_buffer=False):
-    try:
-        if is_buffer:
-            sample = caminho_ou_buffer.read(2048)
-            caminho_ou_buffer.seek(0)
-        else:
-            with open(caminho_ou_buffer, 'r', encoding='latin1', errors='ignore') as f:
-                sample = f.read(2048)
-        
-        if ';' in sample: return ';'
-        if ',' in sample: return ','
-        return ';'
-    except:
-        return ';'
-
+# Função para garantir que a chave utilizada para o join esteja no formato correto
 def limpar_e_converter_chave(serie):
     s = serie.astype(str).str.replace(r'\D', '', regex=True)
     return pd.to_numeric(s, errors='coerce').fillna(0).astype(int)
 
-# ==============================================================================
-# MÓDULO DE ANÁLISE E AGREGAÇÃO
-# ==============================================================================
+# Função para calcular os valores estatísticos pedidos
 def gerar_agregacao_estatistica(df):
-    print("8. [Analytics] Calculando estatísticas por Operadora/UF...")
+    print("8. Calculando estatísticas por Operadora/UF...")
     
     df['ValorDespesas'] = pd.to_numeric(df['ValorDespesas'], errors='coerce').fillna(0)
     
-    df_agg = df.groupby(['Razao_Social', 'UF'])['ValorDespesas'].agg(
+    # Cria um dataframe temporário contendo apenas despesas > 0
+    # Isso remove as negativas e zeradas do cálculo de média e do arquivo final agregado
+    df_positivas = df[df['ValorDespesas'] > 0].copy()
+    
+    if df_positivas.empty:
+        print("   Aviso: Nenhuma despesa positiva encontrada para agregação.")
+        return pd.DataFrame(columns=['Razao_Social', 'UF', 'Valor_Total', 'Media_Trimestral', 'Desvio_Padrao'])
+
+    # Soma do gasto por trimestre
+    df_trimestral = df_positivas.groupby(['Razao_Social', 'UF', 'Ano', 'Trimestre'])['ValorDespesas'].sum().reset_index()
+
+    # Valor total por operadora, Média trimestral por operadora e desvio padrão
+    df_agg = df_trimestral.groupby(['Razao_Social', 'UF'])['ValorDespesas'].agg(
         Valor_Total='sum',
         Media_Trimestral='mean',
         Desvio_Padrao='std'
     ).reset_index()
 
     df_agg['Desvio_Padrao'].fillna(0, inplace=True)
+
+    # Ordenação quicksort em memória
     df_agg.sort_values(by='Valor_Total', ascending=False, inplace=True)
     
     cols = ['Valor_Total', 'Media_Trimestral', 'Desvio_Padrao']
@@ -70,18 +69,23 @@ def gerar_agregacao_estatistica(df):
     return df_agg
 
 def compactar_entrega_final():
-    print(f"9. [Entrega] Gerando arquivo final: {NOME_ZIP_FINAL}...")
+    print(f"9. Gerando arquivo final: {NOME_ZIP_FINAL}...")
+    
     with zipfile.ZipFile(NOME_ZIP_FINAL, 'w', zipfile.ZIP_DEFLATED) as zf:
-        if os.path.exists(ARQUIVO_AGREGADO): zf.write(ARQUIVO_AGREGADO)
-        if os.path.exists(ARQUIVO_ANALITICO): zf.write(ARQUIVO_ANALITICO)
+
+        if os.path.exists(ARQUIVO_AGREGADO):
+            zf.write(ARQUIVO_AGREGADO, arcname=os.path.basename(ARQUIVO_AGREGADO))
+        
+        if os.path.exists(ARQUIVO_ANALITICO):
+            zf.write(ARQUIVO_ANALITICO, arcname=os.path.basename(ARQUIVO_ANALITICO))
             
+    # Limpeza dos arquivos temporários
     if os.path.exists(ARQUIVO_AGREGADO): os.remove(ARQUIVO_AGREGADO)
     if os.path.exists(ARQUIVO_ANALITICO): os.remove(ARQUIVO_ANALITICO)
-    print(f"   -> Sucesso! Arquivo ZIP gerado.")
+    
+    print(f"   -> Sucesso! Arquivo ZIP gerado com sucesso.")
 
-# ==============================================================================
-# VALIDAÇÃO
-# ==============================================================================
+# Função para validação do cnpj
 def validar_digitos_cnpj(cnpj):
     cnpj = re.sub(r'\D', '', str(cnpj)).zfill(14)
     if len(cnpj) != 14 or len(set(cnpj)) == 1: return False
@@ -94,19 +98,30 @@ def validar_digitos_cnpj(cnpj):
     return str(d1) == cnpj[12] and str(d2) == cnpj[13]
 
 def aplicar_validacoes(df):
-    print("6. [Qualidade] Aplicando validações...")
-    df['FLAG_CNPJ_VALIDO'] = df['CNPJ'].apply(lambda x: validar_digitos_cnpj(x) if "NAO" not in str(x) else False)
-    df['FLAG_RAZAO_SOCIAL_VALIDA'] = df['Razao_Social'].apply(lambda x: str(x).strip() != '' and "NAO LOCALIZADA" not in str(x))
-    df['ValorDespesas'] = pd.to_numeric(df['ValorDespesas'], errors='coerce').fillna(0)
-    df['FLAG_VALOR_POSITIVO'] = df['ValorDespesas'] > 0
+    print("6. Calculando flags de inconsistência...")
+    
+    # 1. Flag CNPJ Inválido (True = Erro)
+    df['FLAG_CNPJ_INVALIDO'] = df['CNPJ'].apply(
+        lambda x: True if "NAO" in str(x) else (not validar_digitos_cnpj(x))
+    )
+
+    # 2. Flag Razão Social Inválida (True = Erro)
+    df['FLAG_RAZAO_SOCIAL_INVALIDA'] = df['Razao_Social'].apply(
+        lambda x: str(x).strip() == '' or "NAO LOCALIZADA" in str(x)
+    )
+
+    # 3. Flag Valor Inválido (True = Erro)
+    if 'FLAG_VALOR_INVALIDO' not in df.columns:
+         df['ValorDespesas'] = pd.to_numeric(df['ValorDespesas'], errors='coerce').fillna(0)
+         df['FLAG_VALOR_INVALIDO'] = df['ValorDespesas'] <= 0
+    else:
+         df['FLAG_VALOR_INVALIDO'] = df['FLAG_VALOR_INVALIDO'].astype(bool)
+    
     return df
 
-# ==============================================================================
-# CRAWLER & ETL
-# ==============================================================================
 def baixar_cadastro():
-    print("1. [Crawler] Buscando arquivo de Cadastro...")
-    if not os.path.exists(PASTA_CADASTRO): os.makedirs(PASTA_CADASTRO)
+    print("1. Buscando arquivo de Cadastro...")
+    if not os.path.exists(PASTA_CSV_EXTERNA): os.makedirs(PASTA_CSV_EXTERNA)
     try:
         url_base = URL_DIRETORIO_ANS
         resp = requests.get(url_base, verify=False, timeout=15)
@@ -115,8 +130,7 @@ def baixar_cadastro():
         if not link: return None
         if not link.startswith('http'): link = url_base + link
         
-        caminho = os.path.join(PASTA_CADASTRO, link.split('/')[-1])
-        # Otimização: Se já existe, não baixa de novo (comente se quiser forçar)
+        caminho = os.path.join(PASTA_CSV_EXTERNA, link.split('/')[-1])
         if os.path.exists(caminho): return caminho
 
         print(f"   -> Baixando: {link}")
@@ -127,34 +141,38 @@ def baixar_cadastro():
     except: return None
 
 def executar_pipeline():
-    # 1. Carga
+    # Cria a pasta CSV externa se não existir
+    if not os.path.exists(PASTA_CSV_EXTERNA): os.makedirs(PASTA_CSV_EXTERNA)
+
+    # Baixa o cadastro
     caminho_cad = baixar_cadastro()
     if not caminho_cad:
-        files = glob.glob(os.path.join(PASTA_CADASTRO, "*.csv"))
+        files = glob.glob(os.path.join(PASTA_CSV_EXTERNA, "*.csv"))
         caminho_cad = files[0] if files else None
 
     if not caminho_cad:
         print("Erro Fatal: Nenhum arquivo de cadastro encontrado.")
         return
 
-    print("2. [Leitura] Carregando tabelas...")
+    print("2. Carregando tabelas...")
     try:
         with zipfile.ZipFile(ARQUIVO_DESPESAS_ZIP, 'r') as z:
             with z.open(z.namelist()[0]) as f:
                 texto = io.TextIOWrapper(f, encoding='utf-8')
-                sep = detecting_sep = detectar_separador(texto, is_buffer=True)
-                df_despesas = pd.read_csv(f, sep=sep, encoding='utf-8')
+                df_despesas = pd.read_csv(f, sep=';', encoding='utf-8')
+                # Salva o dataframe de despesas bruto na pasta CSV externa, fora de /data
+                df_despesas.to_csv(os.path.join(PASTA_CSV_EXTERNA, "consolidado_despesas.csv"), index=False, sep=';', encoding='utf-8', quoting=csv.QUOTE_NONNUMERIC, quotechar='"')
+
     except Exception as e:
         print(f"Erro despesas: {e}"); return
 
     try:
-        sep_cad = detectar_separador(caminho_cad)
-        df_cadastro = pd.read_csv(caminho_cad, sep=sep_cad, encoding='latin1', on_bad_lines='skip', dtype=str)
+        df_cadastro = pd.read_csv(caminho_cad, sep=';', encoding='latin1', on_bad_lines='skip', dtype=str)
     except Exception as e:
         print(f"Erro cadastro: {e}"); return
 
-    # 2. Mapeamento
-    print("3. [Tratamento] Mapeando colunas...")
+    # Mapeamento das colunas 
+    print("3. Mapeando colunas...")
     df_cadastro.columns = [c.strip().upper() for c in df_cadastro.columns]
     
     col_reg = COLUNA_ALVO_REGISTRO if COLUNA_ALVO_REGISTRO in df_cadastro.columns else \
@@ -165,17 +183,17 @@ def executar_pipeline():
 
     col_uf = next((c for c in df_cadastro.columns if c == 'UF' or 'ESTADO' in c or 'SIGLA' in c), None)
     
-    df_despesas['KEY_JOIN'] = limpar_e_converter_chave(df_despesas['REG_ANS'])
-    df_cadastro['KEY_JOIN'] = limpar_e_converter_chave(df_cadastro[col_reg])
+    # Limpeza da chave que será utilizaada para o join
+    df_despesas['REG_ANS'] = limpar_e_converter_chave(df_despesas['REG_ANS'])
+    df_cadastro[col_reg] = limpar_e_converter_chave(df_cadastro[col_reg])
     
-    print("4. [Limpeza] Deduplicando cadastro...")
-    df_cadastro.drop_duplicates(subset=['KEY_JOIN'], keep='first', inplace=True)
+    # Caso possua registro de operadora duplicado, irá descartar um deles
+    print("4. Deduplicando cadastro...")
+    df_cadastro.drop_duplicates(subset=[col_reg], keep='first', inplace=True)
 
-    # 3. Join
-    print("5. [Join] Cruzando tabelas...")
-    df_final = pd.merge(df_despesas, df_cadastro, on='KEY_JOIN', how='left')
+    print("5. Cruzando tabelas...")
+    df_final = df_despesas.join(df_cadastro.set_index(COLUNA_ALVO_REGISTRO), on="REG_ANS")
 
-    # Renomeação
     renomear = {}
     col_cnpj = next((c for c in df_cadastro.columns if 'CNPJ' in c), None)
     col_razao = next((c for c in df_cadastro.columns if 'RAZAO' in c or 'NOME' in c), None)
@@ -192,34 +210,32 @@ def executar_pipeline():
     df_final['UF'].fillna("INDETERMINADO", inplace=True)
     df_final['CNPJ'].fillna("NAO ENCONTRADO", inplace=True)
 
-    # 4. Validação
+    # Cria as flags
     df_final = aplicar_validacoes(df_final)
 
-    # ---------------------------------------------------------
-    # CORREÇÃO: FILTRAGEM ESTRITA DAS COLUNAS (O QUE FALTOU)
-    # ---------------------------------------------------------
-    print("7. [Finalização] Selecionando colunas finais...")
+    print("7. Selecionando colunas finais...")
     colunas_desejadas = [
         'REG_ANS', 'CNPJ', 'Razao_Social', 'Modalidade', 'UF', 
         'Trimestre', 'Ano', 'ValorDespesas',
-        'FLAG_CNPJ_VALIDO', 'FLAG_RAZAO_SOCIAL_VALIDA', 'FLAG_VALOR_POSITIVO'
+        'FLAG_CNPJ_INVALIDO', 'FLAG_RAZAO_SOCIAL_INVALIDA', 'FLAG_VALOR_INVALIDO'
     ]
     
-    # Garante que todas existam (mesmo que vazias)
     for c in colunas_desejadas:
         if c not in df_final.columns: df_final[c] = pd.NA
             
-    # APLICA O FILTRO (Remove colunas de lixo do cadastro)
     df_final = df_final[colunas_desejadas]
+    
+    # Salva o relatório final
+    df_final.to_csv(ARQUIVO_ANALITICO, index=False, sep=';', encoding='utf-8', quoting=csv.QUOTE_NONNUMERIC, quotechar='"')
 
-    # Salva Analítico
-    df_final.to_csv(ARQUIVO_ANALITICO, index=False, sep=';', encoding='utf-8')
-
-    # 5. Agregação
+    # Gera e salva a agregação
     df_agregado = gerar_agregacao_estatistica(df_final)
-    df_agregado.to_csv(ARQUIVO_AGREGADO, index=False, sep=';', encoding='utf-8')
+    df_agregado.to_csv(ARQUIVO_AGREGADO, index=False, sep=';', encoding='utf-8', quoting=csv.QUOTE_NONNUMERIC, quotechar='"')
+    
+    # Salva o arquivo de despesas agregadas na pasta CSV externa
+    df_agregado.to_csv(os.path.join(PASTA_CSV_EXTERNA, "despesas_agregadas.csv"), index=False, sep=';', encoding='utf-8', quoting=csv.QUOTE_NONNUMERIC, quotechar='"')
 
-    # 6. Compactação
+    # Compacta ambos no ZIP final
     compactar_entrega_final()
 
 if __name__ == "__main__":

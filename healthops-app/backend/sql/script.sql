@@ -107,7 +107,8 @@ CREATE TEMP TABLE staging_despesas (
     reg_ans TEXT,
     trimestre TEXT,
     ano TEXT,
-    valor_despesas TEXT
+    valor_despesas TEXT,
+    despesas_suspeitas TEXT
 );
 
 COPY staging_despesas FROM '/tmp/csv_data/consolidado_despesas.csv' 
@@ -120,9 +121,13 @@ SELECT
     ano::INT,
     REPLACE(valor_despesas, ',', '.')::DECIMAL(15,2)
 FROM staging_despesas
-WHERE EXISTS (
-    SELECT 1 FROM operadoras op WHERE op.registro_operadora = LPAD(staging_despesas.reg_ans, 6, '0')
-);
+WHERE 
+    EXISTS (
+        SELECT 1 FROM operadoras op 
+        WHERE op.registro_operadora = LPAD(staging_despesas.reg_ans, 6, '0')
+    )
+
+    AND despesas_suspeitas::boolean = false;
 
 CREATE TEMP TABLE staging_agregadas (
     razao_social TEXT,
@@ -139,8 +144,8 @@ INSERT INTO despesas_agregadas
 SELECT 
     razao_social,
     uf,
-    REPLACE(valor_total, ',', '.')::DECIMAL(20,2),
-    REPLACE(media_trimestral, ',', '.')::DECIMAL(20,2),
-    REPLACE(desvio_padrao, ',', '.')::DECIMAL(20,2)
+    NULLIF(REPLACE(valor_total, ',', '.'), '')::DECIMAL(20,2),
+    NULLIF(REPLACE(media_trimestral, ',', '.'), '')::DECIMAL(20,2),
+    NULLIF(REPLACE(desvio_padrao, ',', '.'), '')::DECIMAL(20,2)
 FROM staging_agregadas
 ON CONFLICT (razao_social) DO NOTHING;

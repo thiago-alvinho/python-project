@@ -5,45 +5,40 @@ import zipfile
 import warnings
 import re
 
-# Suprime avisos do Pandas
 warnings.filterwarnings("ignore")
 
-# --- CONFIGURAÇÃO ---
-DIRETORIO_ENTRADA = "downloads_ans"
-ARQUIVO_INTERMEDIARIO = "consolidado_temp.csv"
-ARQUIVO_FINAL_ZIP = "consolidado_despesas.zip"
+# Caminhos utilizados
+BASE_DIR = os.getenv("BASE_DATA_DIR", "data")
+DIRETORIO_ENTRADA = os.path.join(BASE_DIR, "downloads_ans")
+ARQUIVO_INTERMEDIARIO = os.path.join(BASE_DIR, "data_teste_consolidado_temp.csv")
+ARQUIVO_FINAL_ZIP = os.path.join(BASE_DIR, "consolidado_despesas.zip")
 
-# Regex para pegar singular/plural e variações de espaçamento
+# Regex para pegar somente as despesas com assunto "Despesas com Eventos / Sinistros ..."
 REGEX_PALAVRAS_CHAVE = r"despesas? com eventos?|despesas? com sinistros?|eventos? \/ sinistros?"
 
-# --- MAPA DE NORMALIZAÇÃO ---
-# Prioridade total para VL_SALDO_FINAL
+# Possíveis nomes de coluna que pode haver no documento e nome específico para substituir
 MAPA_COLUNAS = {
-    # Identificador
+    
     'REG_ANS': 'REG_ANS',
     'CD_OPERADORA': 'REG_ANS',
     
-    # Data
     'DT_REGISTRO': 'DATA',
     'DATA': 'DATA',
     
-    # O Saldo Final, que é o acumulado oficial do período
     'VL_SALDO_FINAL': 'ValorDespesas',
     'VALOR_SALDO_FINAL': 'ValorDespesas',
     'SALDO_FINAL': 'ValorDespesas',
     
-    # Fallbacks (apenas se não houver saldo final explícito)
     'VALOR': 'ValorDespesas',
     'VL_MOVIMENTO': 'ValorDespesas',
     
-    # Descrição
     'DESCRICAO': 'DESC',
     'NM_CONTA': 'DESC',
     'CD_CONTA_CONTABIL': 'CONTA'
 }
 
+# Detectar separador do documento
 def detectar_separador(caminho_arquivo):
-    """Detecta automaticamente se é ; ou ,"""
     try:
         with open(caminho_arquivo, 'r', encoding='latin1', errors='ignore') as f:
             sample = f.read(2048)
@@ -53,8 +48,8 @@ def detectar_separador(caminho_arquivo):
     except:
         return ';'
 
+# Função para pegar ano e trimestre do nome dos diretórios caso a despesa esteja com a data inválida
 def extrair_data_do_caminho(caminho_arquivo):
-    """Pega Ano/Trimestre da estrutura de pastas se não tiver no CSV"""
     try:
         partes = caminho_arquivo.split(os.sep)
         for parte in partes:
@@ -70,6 +65,7 @@ def extrair_data_do_caminho(caminho_arquivo):
     except:
         return None, None
 
+# Função para carregar arquivo pensando nas possíveis diferentes extensões
 def carregar_arquivo(caminho):
     ext = caminho.lower().split('.')[-1]
     try:
@@ -85,20 +81,17 @@ def carregar_arquivo(caminho):
         print(f"   [X] Erro leitura {os.path.basename(caminho)}: {e}")
         return None
 
+# Função para normalizar a tabela, filtar apenas as despesas que são referentes a
+# 'Despesas com Eventos / Sinistros' e criar a coluna de despesas suspeitas
 def normalizar_e_processar(df, caminho_arquivo):
-    # 1. Padroniza nomes das colunas (Upper case)
+    
     df.columns = [c.strip().upper() for c in df.columns]
     
-    # 2. Renomeação com Prioridade
-    # O dicionário MAPA_COLUNAS vai transformar VL_SALDO_FINAL em 'ValorDespesas'.
-    # VL_SALDO_INICIAL será ignorado/descartado naturalmente.
     df.rename(columns={k.upper(): v for k, v in MAPA_COLUNAS.items()}, inplace=True)
 
-    # Verifica se a coluna alvo foi encontrada
     if 'ValorDespesas' not in df.columns:
         return None
 
-    # 3. Filtro de Linhas (Keywords na Descrição)
     if 'DESC' in df.columns:
         filtro = df['DESC'].astype(str).str.contains(REGEX_PALAVRAS_CHAVE, case=False, regex=True, na=False)
         df = df[filtro]
@@ -108,26 +101,22 @@ def normalizar_e_processar(df, caminho_arquivo):
     if df.empty:
         return None
 
-    # 4. Tratamento de Data
     if 'DATA' in df.columns:
         try:
-            df['DATA'] = pd.to_datetime(df['DATA'], errors='coerce', dayfirst=True)
+            df['DATA'] = pd.to_datetime(df['DATA'], errors='coerce')
             df['Ano'] = df['DATA'].dt.year
             df['Trimestre'] = ((df['DATA'].dt.month - 1) // 3 + 1).astype(str) + "T"
         except:
             df['Ano'] = None
     
-    # Fallback de Data (Pasta)
+    # Caso não consiga extrair a data dos dados, extrai do nome do diretorio
     if 'Ano' not in df.columns or df['Ano'].isnull().all():
         ano_pasta, trim_pasta = extrair_data_do_caminho(caminho_arquivo)
         if ano_pasta:
             df['Ano'] = ano_pasta
             df['Trimestre'] = trim_pasta
 
-    df.dropna(subset=['Ano', 'Trimestre'], inplace=True)
-    df['Ano'] = df['Ano'].astype(int)
-
-    # 5. Tratamento REG_ANS
+    # Caso o nome da coluna não seja 'REG_ANS' tenta achar por outros ois 'COD' ou 'CD_'
     if 'REG_ANS' not in df.columns:
         possiveis = [c for c in df.columns if 'COD' in c or 'CD_' in c]
         if possiveis:
@@ -135,8 +124,7 @@ def normalizar_e_processar(df, caminho_arquivo):
         else:
             return None
 
-    # 6. Limpeza do Valor Numérico
-    # Remove pontos de milhar e troca vírgula por ponto (Padrão BR -> US)
+    # Colocar o valor no padrão US
     col_valor = df['ValorDespesas'].astype(str)
     
     if col_valor.str.contains(',').any():
@@ -144,15 +132,17 @@ def normalizar_e_processar(df, caminho_arquivo):
     
     df['ValorDespesas'] = pd.to_numeric(col_valor, errors='coerce')
     
-    # Filtra valores inválidos ou zerados (opcional, mas recomendado)
-    df = df[df['ValorDespesas'].notna() & (df['ValorDespesas'] != 0)]
+    # Cria a flag de Despesas Suspeitas
+    # Se ValorDespesas for <= 0 ou NaN (fillna(0)), marca como True
+    df['DespesasSuspeitas'] = df['ValorDespesas'].fillna(0) <= 0
 
-    # Retorna apenas as colunas solicitadas
-    cols_finais = ['REG_ANS', 'Trimestre', 'Ano', 'ValorDespesas']
+    cols_finais = ['REG_ANS', 'Trimestre', 'Ano', 'ValorDespesas', 'DespesasSuspeitas']
+    
     return df[cols_finais]
 
+# Função principal
 def processar_tudo():
-    print(f"--- Iniciando Consolidação (Alvo: VL_SALDO_FINAL) ---")
+    print(f"--- Iniciando Consolidação ---")
     
     if os.path.exists(ARQUIVO_INTERMEDIARIO): os.remove(ARQUIVO_INTERMEDIARIO)
     

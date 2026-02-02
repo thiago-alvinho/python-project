@@ -7,12 +7,14 @@ FROM python:3.11-slim
 # no log do Docker, sem ficar "presos" em buffer.
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV BASE_DATA_DIR="/app/data"
 
 WORKDIR /app
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY src/ ./src/
+# Copia tudo da pasta atual para /app
+COPY . . 
 
-CMD ["python", "src/validacao.py"]
+
+CMD ["python", "main.py"]

@@ -1,12 +1,12 @@
 <script setup>
 import { ref, onMounted } from 'vue';
-import { useRoute, useRouter } from 'vue-router'; // Hooks para pegar a URL e navegar
+import { useRoute, useRouter } from 'vue-router';
 import OperadoraService from '../services/OperadoraService';
 
 const route = useRoute();
 const router = useRouter();
 
-const registro = route.params.registro; // Pega o número da URL (ex: 345678)
+const registro = route.params.registro;
 
 const operadora = ref(null);
 const despesas = ref([]);
@@ -14,7 +14,6 @@ const loading = ref(true);
 
 onMounted(async () => {
   try {
-    // Faz as duas requisições ao mesmo tempo para ser mais rápido (Promise.all)
     const [opResponse, despesasResponse] = await Promise.all([
       OperadoraService.getById(registro),
       OperadoraService.getDespesas(registro)
@@ -31,7 +30,6 @@ onMounted(async () => {
   }
 });
 
-// Função para formatar moeda (R$)
 const formatarMoeda = (valor) => {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor);
 };

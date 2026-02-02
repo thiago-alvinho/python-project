@@ -1,9 +1,21 @@
 services:
+  
+  etl-scripts:
+    image: data_scripts:1.0
+    build: ./data_scripts
+    container_name: ans-etl-scripts
+    volumes:
+      - ./:/arquivos
+    environment:
+      - BASE_DATA_DIR=/arquivos/data
+    networks:
+      - ans-network
+  
   # -----------------------------------------------------------------
   # SERVIÇO 1: Banco de Dados (PostgreSQL)
   # -----------------------------------------------------------------
   db:
-    image: postgres:latest
+    image: postgres:18.1-alpine3.23
     container_name: ans-database
     environment:
       POSTGRES_USER: postgres
@@ -13,22 +25,25 @@ services:
       - "5432:5432"
     volumes:
       # Mapeia os CSVs locais para dentro do container
-      - ./healthops-app/backend/csv:/tmp/csv_data
+      - ./csv:/tmp/csv_data
       # Executa o script SQL automaticamente na primeira inicialização
       - ./healthops-app/backend/sql:/docker-entrypoint-initdb.d/
       # Persiste os dados do banco para não perder ao desligar
       - ./healthops-app/backend/postgres_data:/var/lib/postgresql
     networks:
       - ans-network
+    depends_on:
+      etl-scripts:
+        condition: service_completed_successfully
 
   # -----------------------------------------------------------------
   # SERVIÇO 2: Interface Gráfica (pgAdmin 4)
   # -----------------------------------------------------------------
   pgadmin:
-    image: dpage/pgadmin4
-    container_name: teste-pgadmin
+    image: dpage/pgadmin4:9.11.0
+    container_name: ans-pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: thiago_silva.9@hotmail.com
+      PGADMIN_DEFAULT_EMAIL: ans_db@hotmail.com
       PGADMIN_DEFAULT_PASSWORD: PgAdmin2018!
     ports:
       - "15432:80"
