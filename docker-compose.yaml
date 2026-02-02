@@ -43,7 +43,7 @@ services:
     image: dpage/pgadmin4:9.11.0
     container_name: ans-pgadmin
     environment:
-      PGADMIN_DEFAULT_EMAIL: ans_db@hotmail.com
+      PGADMIN_DEFAULT_EMAIL: thiago_silva.9@hotmail.com
       PGADMIN_DEFAULT_PASSWORD: PgAdmin2018!
     ports:
       - "15432:80"
