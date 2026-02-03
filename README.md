@@ -8,9 +8,14 @@
 2. No diretório projeto-estagio execute o comando: docker compose up -d --build.
 3. A aplicação ficará disponível em localhost:3001.
 4. Caso desejado, a api pode ser acessada por localhost:8000/docs, onde poderá ser visto as rotas disponíveis.
-5. Caso desejado, há como acessar o banco através do pgAdmin em localhost:15432/
-login: thiago_silva.9@hotmail.com senha: PgAdmin2018!
+5. Caso desejado, há como acessar o banco através do pgAdmin (Interessante para testar as queries analíticas solicitadas) em localhost:15432/
+
+Login pgAdmin: thiago_silva.9@hotmail.com senha: PgAdmin2018!
+
 Conecte ao servidor:
+(GENERAL)
+Name: (O que preferir)
+(CONNECTION)
 Host name/address: db
 Maintenance database: ans_db
 Username: postgres
@@ -39,8 +44,11 @@ Arquivo /data que possui os seguintes arquivos:
 ## Decisões Técnicas
 
 ### 1.2. Processamento de Arquivos
-
 A abordagem incremental foi escolhida para garantir a escalabilidade do processamento, mantendo o consumo de memória (RAM) baixo e constante, independente do volume total de dados. Além de evitar o uso de Swap, essa estratégia aumenta a resiliência da aplicação: caso ocorra uma falha durante a execução, os arquivos já processados estarão salvos, não sendo necessário reiniciar todo o fluxo do zero.
+
+### Observação
+Foi considerado que o interesse é só de processar os dados com assunto "Despesas com Eventos / Sinistros * ". Portanto o código foi feito para selecionar somente essas linhas, porém, isso é facilmente reversível, caso desejado, e tudo continuará funcionando normalmente.
+
 
 ### 1.3 Consolidação e Análise de Inconsistências
 
@@ -94,7 +102,7 @@ Levando em consideração esse cenário específico, fazer a operação de JOIN 
 ### 2.3. Agregação com Múltiplas Estratégias
 
 #### Ordenação
-A ordenação utilizada foi a quicksort, que possui complexidade O(nlogn), em memória, considerando as justificativas anteriores de que os dados cabem em memória tranquilamente.
+A ordenação utilizada foi a quicksort, que possui complexidade O(nlogn), e será realizada com todos os dados em memória RAM, levando em consideração as justificativas anteriores de que os dados ocupam pouco espaço de memória.
 
 ### 3 Teste de banco de dados e análise
 
@@ -110,6 +118,11 @@ A tabela desnormalizada com todos os dados em uma única tabela teria as seguint
 
 A vantagem que essa abordagem tem é diminuir a quantidade de joins, que é uma operação cara, porém, dá para diminuir de forma significativa esse custo utilizando os índices.
 
+#### Tratamento de inconsistência nos dados ao importar do csv
+Decidi por importar os dados em tabelas temporárias com campos do tipo TEXT para tratamento antes da inserção no banco. Utilizei a função "LPAD()" (para preencher registro de operadora, cnp e cep com zeros a esquerda), "NULLIF()" (Para preencheer com NULL campos que venham vazios) e REPLACE() (para colocar valores monetários no formato US).
+
+Além disso, utilizei a cláusula WHERE para filtar despesas com valor menor ou igual a zero.
+
 #### Tipo de dados
 
 ##### Escolhas
@@ -119,6 +132,26 @@ Decimal e DATE
 Decimal pois é mais preciso para cálculos financeiros. Integer não conseguiríamos ter valores com centavos e float não é preciso para frações exatas.
 
 Date pois string tornaria operações no banco como ORDER BY mais custosas e TIMESTAMP não é necessário porque não usaremos hora.
+
+#### Queries analíticas
+Estão localizadas em /healthops-app/backend/sql
+
+##### 5 operadoras com maior crescimento percentual entre o primeiro e último trimestre analisado
+Fórmula do crescimento percentual: ((gasto final - gasto inicial) / (gasto inicial)) * 100
+
+Para operadoras que não possuem gastos no primeiro trimeste (gasto 0), acarretaria em divisão por 0, o que não é possível calcular. A princípio, considei que essas operadoras não tiveram gastos nesse trimestre e portanto, atribui os seus crescimentos percentuais como infinito. Porém, isso resultou nessas operadoras tomando conta das primeiras posições da tabela. Isso me fez considerar outro cenário e creio que o mais provável seja que elas são operadoras novas e não atuavam naquele trimestre. Tendo isso em mente, irei desconsiderá-las nesses cálculos.
+
+Para operadoras que não possuem gastos no último trimestre analisado, resultaria em crescimento percentual negativo de 100%. Elas seriam as últimas nessa tabela e como queremos as 5 com maiores, eu irei desconsiderá-las.
+
+Foi utilizada a função COALESCE() para não utilizar valores nulos.
+
+##### Despesas acima da média geral
+
+###### Trade-off técnico
+Optei por utilizar CTE(Common Table Expression) para quebrar os cálculos em partes menores, isso proporciona:
+Performance - O cálculo é realizado apenas uma vez, e esse resultado é reutilizado posteriormente.
+Legibilidade - Não há estruturas aninhadas e a consulta é dividida em partes menores.
+Manutenibilidade - Basta alterar um trecho do script que as alterações refletem nas outras partes que o estão utilizando.
 
 ### 4.2.3 Cache vs Queries diretas
 
