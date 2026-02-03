@@ -60,7 +60,7 @@ onMounted(async () => {
     };
 
     // --- MONTAGEM DO GRÁFICO POR UF ---
-    // os 5 estados maiores para o gráfico não ficar polúido
+    // os 5 maiores estados para o gráfico não ficar polúido
     const ufsPrincipais = stats.value.despesas_por_uf.slice(0, 5);
     // Restante como "Outros"
     const outrosTotal = stats.value.despesas_por_uf.slice(5).reduce((acc, curr) => acc + Number(curr.total), 0);

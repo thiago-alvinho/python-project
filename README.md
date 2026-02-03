@@ -5,10 +5,12 @@
 ### Necessário possuir docker instalado
 
 1. Clone o repositório.
-2. No diretório projeto-estagio execute o comando: docker compose up -d --build.
+2. No diretório projeto-estagio execute o comando: docker compose up -d --build
 3. A aplicação ficará disponível em localhost:3001.
 4. Caso desejado, a api pode ser acessada por localhost:8000/docs, onde poderá ser visto as rotas disponíveis.
 5. Caso desejado, há como acessar o banco através do pgAdmin (Interessante para testar as queries analíticas solicitadas) em localhost:15432/
+
+OBS: Os serviçoes podem demorar um pouco para iniciar e serem acessíveis nos links
 
 Login pgAdmin: thiago_silva.9@hotmail.com senha: PgAdmin2018!
 
@@ -134,7 +136,7 @@ Decimal pois é mais preciso para cálculos financeiros. Integer não conseguir�
 Date pois string tornaria operações no banco como ORDER BY mais custosas e TIMESTAMP não é necessário porque não usaremos hora.
 
 #### Queries analíticas
-Estão localizadas em /healthops-app/backend/sql
+Estão localizadas em /queries_analiticas e podem ser testadas no pgAdmin em localhost:15432/
 
 ##### 5 operadoras com maior crescimento percentual entre o primeiro e último trimestre analisado
 Fórmula do crescimento percentual: ((gasto final - gasto inicial) / (gasto inicial)) * 100
@@ -153,10 +155,34 @@ Performance - O cálculo é realizado apenas uma vez, e esse resultado é reutil
 Legibilidade - Não há estruturas aninhadas e a consulta é dividida em partes menores.
 Manutenibilidade - Basta alterar um trecho do script que as alterações refletem nas outras partes que o estão utilizando.
 
-### 4.2.3 Cache vs Queries diretas
+### Escolha do framework
+Optei por utilizar o FastAPI por apresentar um maior desempenho, suporte nativo a assincronismo, validação de dados com Pydantic e documentação automática.
 
-#### Escolha
-A solução técnica escolhida é o cache
+### Estratégia de paginação
+Optei por utilizar o Offset-based levando em consideração que o volume de dados é pequeno, tendo em vista que selecionamos apenas os 3 últimos trimestres e filtramos os gastos para apenas "Despesas com Eventos / Sinistros *" e a frequência de atualização do banco é baixa.
 
-#### Motivo
-Os dados da ANS são históricos e trimestrais. Por esse motivo, não é necessário atualizar o cálculo desses dados a todo momento. A utilização do cache evitará esses cálculos desnecessários.
+### Cache vs Queries diretas
+A solução técnica escolhida é o cache, visto que os dados da ANS são históricos e trimestrais. Por esse motivo, não é necessário atualizar o cálculo desses dados a todo momento. A utilização do cache evitará esses cálculos desnecessários.
+
+### Estrutura de resposta da API
+Optei por fornecer os dados + metadados (total, page, limit) para o frontend para que ele seja capaz de mostrar para o usuário o total de páginas disponíveis, e desativar os botões de próximo/anterior quando for o caso.
+
+### Estratégia de busca/filtro
+Optei pela busca no servidor, tendo em vista que por conta da estratégia de paginação, o cliente só possui os 10 registros da página atual.
+
+### Gerenciamento de estado
+Optei por utilizar o pinia.
+
+Complexidade da Aplicação: O projeto possui complexidade média, onde componentes distintos (Barra de Busca, Tabela e Paginação) precisam acessar e modificar os mesmos dados simultaneamente. O uso de props simples tornaria o código confuso e difícil de manter ("Prop Drilling").
+
+Necessidade de Compartilhamento: A principal razão foi garantir a continuidade da navegação. É necessário que o filtro de busca e o número da página sejam preservados na memória global quando o usuário navega para a tela de "Detalhes" e clica em "Voltar". Sem o gerenciamento de estado global, esses dados seriam perdidos e a lista resetaria a cada troca de tela.
+
+
+### Tratamento de erros e loading
+Loading: Controlado por uma variável booleana (loading) dentro de blocos try/catch/finally. Enquanto a requisição ocorre, a interface exibe um spinner de carregamento e oculta a tabela de dados.
+
+Dados Vazios: O sistema verifica se a lista retornada está vazia (length === 0). Se estiver, exibe uma mensagem amigável (ex: "Nenhuma despesa registrada") em vez de uma tabela em branco.
+
+Tratamento de erros:
+Backend: Retorna códigos HTTP específicos, como 404 quando uma operadora não é encontrada.
+Frontend: Intercepta falhas com try/catch. Para erros críticos na tela de detalhes, usa um alert() nativo; para a listagem geral, registra o erro no console e no estado da store.
